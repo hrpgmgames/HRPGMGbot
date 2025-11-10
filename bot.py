@@ -31,15 +31,26 @@ try:
     bot.remove_webhook()
     bot.set_webhook(url=f"{URL}/{TOKEN}")
     print("Webhook установлен успешно!")  # Для логов
+    
+    # ДОБАВЛЕНО: Логирование информации о webhook для диагностики
+    webhook_info = bot.get_webhook_info()
+    print(f"Webhook info: {webhook_info}")  # Покажет URL, pending updates и т.д.
+    
 except Exception as e:
     print(f"Ошибка при установке webhook: {e}")
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def webhook():
-    json_str = request.get_data().decode('UTF-8')
-    update = telebot.types.Update.de_json(json_str)
-    bot.process_new_updates([update])
-    return '', 200
+    try:
+        print("Получен POST на webhook")  # ДОБАВЛЕНО: Для подтверждения получения обновления
+        json_str = request.get_data().decode('UTF-8')
+        update = telebot.types.Update.de_json(json_str)
+        print(f"Update: {update}")  # ДОБАВЛЕНО: Для отладки содержимого обновления
+        bot.process_new_updates([update])
+        return '', 200
+    except Exception as e:
+        print(f"Ошибка в webhook: {e}")  # ДОБАВЛЕНО: Логирование ошибок
+        return 'error', 500
 
 @app.route('/healthcheck', methods=['GET'])
 def health():
