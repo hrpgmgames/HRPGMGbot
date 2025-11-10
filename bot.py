@@ -52,7 +52,12 @@ def webhook():
         json_str = request.get_data().decode('UTF-8')
         update = telebot.types.Update.de_json(json_str)
         print(f"Update: {update}")  # ДОБАВЛЕНО: Для отладки содержимого обновления
-        bot.process_new_updates([update])
+        
+        # ИЗМЕНЕНО: Заменили process_new_updates на handle_update (для одного update это надежнее)
+        print("Processing update")  # ДОБАВЛЕНО: Для проверки вызова обработки
+        bot.handle_update(update)  # Используем handle_update вместо process_new_updates([update])
+        print("Update handled")  # ДОБАВЛЕНО: Для подтверждения окончания обработки
+        
         return '', 200
     except Exception as e:
         print(f"Ошибка в webhook: {e}")  # ДОБАВЛЕНО: Логирование ошибок
