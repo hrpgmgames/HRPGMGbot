@@ -11,6 +11,7 @@ bot = telebot.TeleBot(TOKEN)
 # Твой существующий код handlers (пример для эха с кнопками — адаптируй)
 @bot.message_handler(commands=['start'])
 def start(message):
+    print(f"Команда /start получена от {message.chat.id}")  # Добавь это для логов
     markup = telebot.types.InlineKeyboardMarkup()
     btn1 = telebot.types.InlineKeyboardButton("Кнопка 1", callback_data="btn1")
     markup.add(btn1)
@@ -18,9 +19,10 @@ def start(message):
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback(call):
+    print(f"Callback получен: {call.data}")  # Добавь для логов
     if call.data == "btn1":
         bot.answer_callback_query(call.id, "Кнопка нажата!")
-
+        
 # Webhook handler
 app = Flask(__name__)
 
