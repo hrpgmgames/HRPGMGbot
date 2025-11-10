@@ -53,9 +53,9 @@ def webhook():
         update = telebot.types.Update.de_json(json_str)
         print(f"Update: {update}")  # ДОБАВЛЕНО: Для отладки содержимого обновления
         
-        # ИЗМЕНЕНО: Заменили process_new_updates на handle_update (для одного update это надежнее)
+        # ИСПРАВЛЕНО: Вернули process_new_updates (handle_update не существует в pyTelegramBotAPI)
         print("Processing update")  # ДОБАВЛЕНО: Для проверки вызова обработки
-        bot.handle_update(update)  # Используем handle_update вместо process_new_updates([update])
+        bot.process_new_updates([update])  # Правильный метод для обработки списка обновлений
         print("Update handled")  # ДОБАВЛЕНО: Для подтверждения окончания обработки
         
         return '', 200
