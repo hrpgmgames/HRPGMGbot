@@ -22,6 +22,12 @@ def callback(call):
     print(f"Callback получен: {call.data}")  # Добавь для логов
     if call.data == "btn1":
         bot.answer_callback_query(call.id, "Кнопка нажата!")
+
+# НОВОЕ: Отладочный handler для всех текстовых сообщений (чтобы проверить, доходят ли они)
+@bot.message_handler(content_types=['text'])
+def debug_all_text(message):
+    print(f"ОТЛАДКА: Получено текстовое сообщение: '{message.text}' от {message.chat.id}")
+    # Не отправляй ответ, просто логируй — чтобы не мешать основному handler
         
 # Webhook handler
 app = Flask(__name__)
