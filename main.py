@@ -1,53 +1,41 @@
+import os
+from flask import Flask, request
 import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# Ваш токен бота от BotFather
-TOKEN = '8466597404:AAGWBwitA0LZv_NPdTkbwgxHr-xELzv3laI'
+TOKEN = os.environ["BOT_TOKEN"]  # Или TELEGRAM_BOT_TOKEN
+URL = os.environ["RENDER_EXTERNAL_URL"]  # Render сам добавит
+PORT = int(os.environ.get("PORT", 5000))
+
 bot = telebot.TeleBot(TOKEN)
 
-# Обработчик команды /start
+# Твой существующий код handlers (пример для эха с кнопками — адаптируй)
 @bot.message_handler(commands=['start'])
 def start(message):
-    markup = InlineKeyboardMarkup()
-    markup.add(
-        InlineKeyboardButton("Подписка", callback_data="subscription"),
-        InlineKeyboardButton("Тарифы", callback_data="tariffs")
-    )
-    bot.send_message(message.chat.id, "Выберите опцию:", reply_markup=markup)
+    markup = telebot.types.InlineKeyboardMarkup()
+    btn1 = telebot.types.InlineKeyboardButton("Кнопка 1", callback_data="btn1")
+    markup.add(btn1)
+    bot.send_message(message.chat.id, "Привет! Выбери:", reply_markup=markup)
 
-# Обработчик callback-запросов от кнопок
 @bot.callback_query_handler(func=lambda call: True)
-def callback_handler(call):
-    if call.data == "subscription":
-        bot.answer_callback_query(call.id)  # Закрыть "загрузку" на кнопке
-        bot.send_message(call.message.chat.id, "Подписка не активна")
-    
-    elif call.data == "tariffs":
-        markup = InlineKeyboardMarkup()
-        markup.add(
-            InlineKeyboardButton("1 месяц - 100 руб", callback_data="tariff_1"),
-            InlineKeyboardButton("2 месяца - 200 руб", callback_data="tariff_2"),
-            InlineKeyboardButton("3 месяца - 300 руб", callback_data="tariff_3")
-        )
-        bot.edit_message_text(
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            text="Выберите тариф:",
-            reply_markup=markup
-        )
-        bot.answer_callback_query(call.id)
-    
-    # Здесь можно добавить обработку для тарифов (tariff_1, tariff_2, tariff_3), если нужно (например, показать детали или оплатить)
-    elif call.data.startswith("tariff_"):
-        bot.answer_callback_query(call.id)
-        # Пример: просто показать сообщение
-        if call.data == "tariff_1":
-            bot.send_message(call.message.chat.id, "Вы выбрали 1 месяц за 100 руб. (Здесь можно добавить логику оплаты)")
-        elif call.data == "tariff_2":
-            bot.send_message(call.message.chat.id, "Вы выбрали 2 месяца за 200 руб.")
-        elif call.data == "tariff_3":
-            bot.send_message(call.message.chat.id, "Вы выбрали 3 месяца за 300 руб.")
+def callback(call):
+    if call.data == "btn1":
+        bot.answer_callback_query(call.id, "Кнопка нажата!")
 
-# Запуск бота
-if __name__ == "__main__":
-    bot.polling(none_stop=True)
+# Webhook handler
+app = Flask(__name__)
+
+@app.route(f'/{TOKEN}', methods=['POST'])
+def webhook():
+    json_str = request.get_data().decode('UTF-8')
+    update = telebot.types.Update.de_json(json_str)
+    bot.process_new_updates([update])
+    return '', 200
+
+@app.route('/healthcheck', methods=['GET'])
+def health():
+    return 'ok', 200
+
+if __name__ == '__main__':
+    bot.remove_webhook()
+    bot.set_webhook(url=f"{URL}/{TOKEN}")
+    app.run(host='0.0.0.0', port=PORT)
