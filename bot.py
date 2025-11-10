@@ -24,6 +24,14 @@ def callback(call):
 # Webhook handler
 app = Flask(__name__)
 
+# НОВОЕ: Добавь установку webhook здесь (в глобальную область)
+try:
+    bot.remove_webhook()
+    bot.set_webhook(url=f"{URL}/{TOKEN}")
+    print("Webhook установлен успешно!")  # Для логов
+except Exception as e:
+    print(f"Ошибка при установке webhook: {e}")
+
 @app.route(f'/{TOKEN}', methods=['POST'])
 def webhook():
     json_str = request.get_data().decode('UTF-8')
@@ -35,7 +43,4 @@ def webhook():
 def health():
     return 'ok', 200
 
-if __name__ == '__main__':
-    bot.remove_webhook()
-    bot.set_webhook(url=f"{URL}/{TOKEN}")
-    app.run(host='0.0.0.0', port=PORT)
+# УБЕРИ весь блок if __name__ == '__main__' — он не нужен для Gunicorn
