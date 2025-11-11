@@ -63,6 +63,7 @@ async def check_subscriptions(context: ContextTypes.DEFAULT_TYPE):
         await asyncio.sleep(10)  # Проверка каждые 10 секунд
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logging.info(f"Start called by user ID: {update.effective_user.id}, ADMIN_ID: {ADMIN_ID}")  # Добавь эту строку для логирования
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("Доступ запрещён.")
         return ConversationHandler.END
