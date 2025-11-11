@@ -46,22 +46,22 @@ def save_data():
         json.dump(data, f)
 
 async def check_subscriptions(context: ContextTypes.DEFAULT_TYPE):
-    while True:
-        now = datetime.datetime.now()
-        to_kick = []
-        for user_id, data in users_data.items():
-            if data["expiry"] <= now:
-                try:
-                    await context.bot.ban_chat_member(GROUP_ID, user_id)  # Кик + бан
-                    await context.bot.unban_chat_member(GROUP_ID, user_id)  # Разбан, чтобы не считался забаненным
-                    await context.bot.send_message(user_id, "Ваша подписка истекла. Вы исключены из группы.")
-                    to_kick.append(user_id)
-                except Exception as e:
-                    logging.error(f"Ошибка при кике {user_id}: {e}")
-        for uid in to_kick:
-            del users_data[uid]
-        save_data()
-        await asyncio.sleep(10)  # Проверка каждые 10 секунд
+    # Убрали while True и asyncio.sleep — теперь функция делает одну проверку и завершается
+    now = datetime.datetime.now()
+    to_kick = []
+    for user_id, data in users_data.items():
+        if data["expiry"] <= now:
+            try:
+                await context.bot.ban_chat_member(GROUP_ID, user_id)  # Кик + бан
+                await context.bot.unban_chat_member(GROUP_ID, user_id)  # Разбан, чтобы не считался забаненным
+                await context.bot.send_message(user_id, "Ваша подписка истекла. Вы исключены из группы.")
+                to_kick.append(user_id)
+            except Exception as e:
+                logging.error(f"Ошибка при кике {user_id}: {e}")
+    for uid in to_kick:
+        del users_data[uid]
+    save_data()
+    # Функция завершается здесь — job_queue повторит её через 10 секунд
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logging.info(f"Start called by user ID: {update.effective_user.id}, ADMIN_ID: {ADMIN_ID}")  # Добавь эту строку для логирования
