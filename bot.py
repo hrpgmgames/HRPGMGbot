@@ -4,6 +4,7 @@ import logging
 import json
 import datetime
 import uvicorn  # Добавлен импорт uvicorn
+from contextlib import asynccontextmanager  # Добавлен для lifespan
 from starlette.applications import Starlette
 from starlette.responses import Response, PlainTextResponse
 from starlette.requests import Request
@@ -245,10 +246,14 @@ async def telegram(request: Request) -> Response:
     await app.process_update(update)  # Измени с update_queue.put
     return Response()
 
-async def health(_: Request) -> PlainTextResponse:
+async def health(_: Request) -> Response:
     return PlainTextResponse("ok")
 
-async def main():
+# Глобальная переменная для app (инициализируется в lifespan)
+app = None
+
+@asynccontextmanager
+async def lifespan(app_starlette):
     global app
     load_data()
     app = Application.builder().token(TOKEN).updater(None).build()
@@ -284,19 +289,23 @@ async def main():
     # Фоновая задача для проверки подписок
     app.job_queue.run_repeating(check_subscriptions, interval=10, first=0)
     
-    # Запуск ASGI-сервера
-    await server.serve()
+    # Инициализация и старт PTB app
+    await app.initialize()
+    await app.start()
+    logging.info("PTB app initialized and started")
+    yield
+    # Shutdown
+    await app.stop()
+    logging.info("PTB app stopped")
 
 starlette = Starlette(routes=[
     Route("/telegram", telegram, methods=["POST"]),
     Route("/healthcheck", health, methods=["GET"]),
-])
+], lifespan=lifespan)
 
 server = uvicorn.Server(
     uvicorn.Config(app=starlette, host="0.0.0.0", port=PORT, use_colors=False)
 )
 
 if __name__ == "__main__":
-    asyncio.run(main())
     server.run(starlette)
-
