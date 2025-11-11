@@ -3,6 +3,7 @@ import asyncio
 import logging
 import json
 import datetime
+import uvicorn  # Добавлен импорт uvicorn
 from starlette.applications import Starlette
 from starlette.responses import Response, PlainTextResponse
 from starlette.requests import Request
@@ -10,7 +11,7 @@ from starlette.routing import Route
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatInviteLink
 from telegram.ext import (
     Application, ContextTypes, MessageHandler, filters, CallbackQueryHandler,
-    ConversationHandler, CommandHandler
+    ConversationHandler, CommandHandler, ChatMemberHandler
 )
 
 TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
