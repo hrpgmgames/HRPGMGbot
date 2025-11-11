@@ -20,7 +20,7 @@ if not GROUP_ID:
 
 # Данные пользователей: {user_id: {'username': str, 'link': str, 'expire_date': datetime}}
 users_data = {}
-# Ожидающие добавления: {admin_chat_id: {'period': int}}
+# Ожидающие добавления: {link: {'period': int, 'admin_id': int}}
 pending_adds = {}
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -75,7 +75,7 @@ async def add_new_period(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     data = query.data.split('_')
     period_seconds = int(data[1])
     admin_chat_id = query.from_user.id
-    pending_adds[admin_chat_id] = {'period': period_seconds}
+    context.user_data['pending_period'] = period_seconds
     keyboard = [[InlineKeyboardButton("Назад", callback_data='add_new')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(
@@ -84,12 +84,12 @@ async def add_new_period(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         reply_markup=reply_markup
     )
 
-# Handler для контакта/тега (создание link и отправка)
+# Handler для контакта/тега (создание link и отдача админу)
 async def handle_add_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     admin_chat_id = update.effective_user.id
-    if admin_chat_id not in pending_adds:
+    period_seconds = context.user_data.get('pending_period')
+    if not period_seconds:
         return
-    period_seconds = pending_adds[admin_chat_id]['period']
     user_id = None
     username = None
 
@@ -128,47 +128,41 @@ async def handle_add_user(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text(f'Ошибка создания ссылки: {e}')
         return
 
-    # Отправка пользователю
-    try:
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=f'Приглашение в группу: {link}\nПодписка на {period_seconds} секунд.'
-        )
-        await update.message.reply_text(f'Ссылка отправлена пользователю {username} (ID: {user_id}). Ожидайте вступления.')
-    except Exception as e:
-        await update.message.reply_text(f'Ошибка отправки: {e}')
-        return
+    # Сохраняем в pending_adds по link
+    pending_adds[link] = {'period': period_seconds, 'admin_id': admin_chat_id, 'target_user_id': user_id, 'target_username': username}
 
-    # Сохраняем ожидание вступления
-    pending_adds[admin_chat_id]['user_id'] = user_id
-    pending_adds[admin_chat_id]['username'] = username
-    pending_adds[admin_chat_id]['link'] = link
+    # Показываем ссылку админу
+    await update.message.reply_text(
+        f'Ссылка создана: {link}\n'
+        f'Отправьте её пользователю {username} (ID: {user_id}) вручную. После вступления он будет занесён в базу с периодом {period_seconds} секунд.'
+    )
+    # Очищаем pending
+    del context.user_data['pending_period']
 
 # Handler для вступления в группу
 async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.chat_member and update.chat_member.chat.id == GROUP_ID:
         new_member = update.chat_member.new_chat_member
-        if new_member.status in ['member', 'administrator', 'creator']:
+        invite_link = update.chat_member.invite_link
+        if new_member.status == 'member' and invite_link and invite_link.invite_link in pending_adds:
+            link = invite_link.invite_link
+            data = pending_adds[link]
             user_id = new_member.user.id
             username = new_member.user.username or new_member.user.first_name or 'Без имени'
-            # Ищем в pending_adds
-            for admin_id, data in list(pending_adds.items()):
-                if data.get('user_id') == user_id:
-                    period_seconds = data['period']
-                    link = data['link']
-                    expire_date = datetime.now() + timedelta(seconds=period_seconds)
-                    users_data[user_id] = {
-                        'username': username,
-                        'link': link,
-                        'expire_date': expire_date
-                    }
-                    context.job_queue.run_once(kick_user, timedelta(seconds=period_seconds), data={'user_id': user_id, 'chat_id': GROUP_ID})
-                    await context.bot.send_message(
-                        chat_id=admin_id,
-                        text=f'Пользователь {username} (ID: {user_id}) присоединился. Подписка до {expire_date}.'
-                    )
-                    del pending_adds[admin_id]
-                    break
+            period_seconds = data['period']
+            admin_id = data['admin_id']
+            expire_date = datetime.now() + timedelta(seconds=period_seconds)
+            users_data[user_id] = {
+                'username': username,
+                'link': link,
+                'expire_date': expire_date
+            }
+            context.job_queue.run_once(kick_user, timedelta(seconds=period_seconds), data={'user_id': user_id, 'chat_id': GROUP_ID})
+            await context.bot.send_message(
+                chat_id=admin_id,
+                text=f'Пользователь {username} (ID: {user_id}) присоединился по ссылке. Подписка до {expire_date}.'
+            )
+            del pending_adds[link]
 
 # Handler для 'manage_members' (список пользователей)
 async def manage_members(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -265,8 +259,7 @@ async def extend_period(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await query.edit_message_text('Ошибка.')
         return
     users_data[user_id]['expire_date'] += timedelta(seconds=period_seconds)
-    # Обновить job (отменить старый, запустить новый)
-    # Для простоты — перезапустить job
+    # Обновить job (отменить старый, запустить новый) — для простоты перезапускаем
     context.job_queue.run_once(kick_user, users_data[user_id]['expire_date'] - datetime.now(), data={'user_id': user_id, 'chat_id': GROUP_ID})
     await query.edit_message_text(f'Подписка продлена на {period_seconds} секунд. Новая дата: {users_data[user_id]["expire_date"]}. Возврат в меню.')
     # Возврат в меню
