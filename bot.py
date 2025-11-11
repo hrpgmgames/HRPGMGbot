@@ -106,7 +106,7 @@ async def add_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if query.from_user.id != ADMIN_ID:
         await query.edit_message_text('Доступ запрещен.')
         return
-   keyboard = [
+    keyboard = [
         [InlineKeyboardButton("10 минут", callback_data='period_600')],  # Изменено
         [InlineKeyboardButton("30 минут", callback_data='period_1800')],  # Изменено
         [InlineKeyboardButton("1 час", callback_data='period_3600')],  # Изменено
