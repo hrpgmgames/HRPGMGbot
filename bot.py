@@ -304,6 +304,7 @@ def main():
     import asyncio
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    loop.run_until_complete(app.initialize())  # Инициализируем Application
     loop.run_until_complete(app.bot.set_webhook(url=f"{URL}/webhook"))
 
     # Запуск Starlette
