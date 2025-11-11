@@ -1,198 +1,346 @@
-import logging
-import os  # НОВОЕ: Для чтения переменных окружения
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ChatInviteLink
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ChatMemberHandler
-from datetime import datetime, timedelta
+import os
 import asyncio
+import logging
+from datetime import datetime, timedelta
+from starlette.applications import Starlette
+from starlette.responses import Response, PlainTextResponse
+from starlette.requests import Request
+from starlette.routing import Route
+import uvicorn
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ChatMemberHandler
 
-# Настройки из переменных окружения (env)
-TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')  # Твоя переменная для токена бота (обязательно!)
-if not TOKEN:
-    raise ValueError("TELEGRAM_BOT_TOKEN не задан в env!")
-
-GROUP_ID = int(os.getenv('GROUP_ID'))  # ИСПРАВЛЕНО: Преобразуем в int (ID группы как число, например, -1001234567890)
+# Env-переменные
+TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
+URL = os.environ["RENDER_EXTERNAL_URL"]
+PORT = int(os.getenv("PORT", 8000))
+GROUP_ID = int(os.getenv('GROUP_ID'))  # ID группы
 if not GROUP_ID:
-    raise ValueError("GROUP_ID не задан в env!")
+    raise ValueError("GROUP_ID не задан!")
 
-ADMIN_ID = os.getenv('ADMIN_ID')  # Твоя переменная для ID админа (число!)
-if not ADMIN_ID:
-    raise ValueError("ADMIN_ID не задан в env!")
-ADMIN_IDS = [int(ADMIN_ID)]  # Преобразуем в int и делаем список (для одного админа)
-
-# Данные пользователей: {user_id: {'join_time': datetime, 'period': int, 'message': message}}
+# Данные пользователей: {user_id: {'username': str, 'link': str, 'expire_date': datetime}}
 users_data = {}
-
-# Ожидающие приглашения: {admin_chat_id: {'period': period, 'message': message}}
-pending_invites = {}
+# Ожидающие добавления: {admin_chat_id: {'period': int}}
+pending_adds = {}
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)  # ИСПРАВЛЕНО: Убрана лишняя }
+logger = logging.getLogger(__name__)
 
-# ПЕРЕНЕСЕНО ИЗ СТАРОГО: Без изменений
+# Handler для /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    await update.message.reply_text(f'Привет, {user.first_name}! Я бот для управления членством в группе.')
-
-# ПЕРЕНЕСЕНО ИЗ СТАРОГО: Без изменений
-async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text('У вас нет прав.')
-        return
-    keyboard = [
-        [InlineKeyboardButton("Добавить пользователя", callback_data='add_user')],
-        [InlineKeyboardButton("Удалить пользователя", callback_data='remove_user')],
-        [InlineKeyboardButton("Список пользователей", callback_data='list_users')],
-    ]
+    keyboard = [[InlineKeyboardButton("Админка", callback_data='admin')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text('Меню админа:', reply_markup=reply_markup)
+    await update.message.reply_text('Добро пожаловать! Нажмите "Админка" для доступа.', reply_markup=reply_markup)
 
-# ПЕРЕНЕСЕНО ИЗ СТАРОГО: Без изменений
-async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+# Handler для 'admin' (запрос пароля)
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text('Введите пароль (токен бота):')
+    context.user_data['waiting_password'] = True
+
+# Handler для ввода пароля
+async def handle_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.user_data.get('waiting_password'):
+        return
+    password = update.message.text
+    if password == TOKEN:
+        context.user_data['waiting_password'] = False
+        keyboard = [
+            [InlineKeyboardButton("Добавить нового пользователя в группу", callback_data='add_new')],
+            [InlineKeyboardButton("Управление членством группы", callback_data='manage_members')],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text('Пароль верный. Меню:', reply_markup=reply_markup)
+    else:
+        await update.message.reply_text('Неверный пароль. Попробуйте снова.')
+
+# Handler для 'add_new' (выбор периода)
+async def add_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     keyboard = [
-        [InlineKeyboardButton("1 час", callback_data='period_1')],
-        [InlineKeyboardButton("24 часа", callback_data='period_24')],
-        [InlineKeyboardButton("7 дней", callback_data='period_168')],
+        [InlineKeyboardButton("10 секунд", callback_data='period_10')],
+        [InlineKeyboardButton("30 секунд", callback_data='period_30')],
+        [InlineKeyboardButton("1 минута", callback_data='period_60')],
+        [InlineKeyboardButton("Назад", callback_data='back_to_menu')],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text('Выберите период подписки:', reply_markup=reply_markup)
 
-# ОБНОВЛЕНО: Из старого add_user_period (был для выбора периода и ожидания user_id) — теперь создаёт invite link и сохраняет ожидание
-async def add_user_period(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+# Handler для выбора периода (запрос контакта/тега)
+async def add_new_period(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     data = query.data.split('_')
-    period_hours = int(data[1])
+    period_seconds = int(data[1])
     admin_chat_id = query.from_user.id
+    pending_adds[admin_chat_id] = {'period': period_seconds}
+    keyboard = [[InlineKeyboardButton("Назад", callback_data='add_new')]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(
+        f'Период выбран: {period_seconds} секунд.\n'
+        'Теперь скиньте контакт пользователя или введите его @тег/@username (или user_id):',
+        reply_markup=reply_markup
+    )
 
-    # Создаём invite link (НОВОЕ)
-    expire_date = datetime.now() + timedelta(hours=1)  # Ссылка действительна 1 час
+# Handler для контакта/тега (создание link и отправка)
+async def handle_add_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    admin_chat_id = update.effective_user.id
+    if admin_chat_id not in pending_adds:
+        return
+    period_seconds = pending_adds[admin_chat_id]['period']
+    user_id = None
+    username = None
+
+    if update.message.contact:
+        user_id = update.message.contact.user_id
+        username = update.message.contact.first_name or 'Без имени'
+    elif update.message.text:
+        text = update.message.text.strip()
+        if text.startswith('@'):
+            username = text[1:]
+            # Для @username нужно получить user_id — бот не может напрямую, так что просим user_id
+            await update.message.reply_text('Для @тега введите user_id пользователя (число).')
+            return
+        else:
+            try:
+                user_id = int(text)
+                username = f'User_{user_id}'  # Заглушка, если нет имени
+            except ValueError:
+                await update.message.reply_text('Неверный формат. Скиньте контакт или введите user_id.')
+                return
+
+    if not user_id:
+        return
+
+    # Создание invite link
+    expire_date = datetime.now() + timedelta(hours=1)
     try:
         invite_link = await context.bot.create_chat_invite_link(
             chat_id=GROUP_ID,
-            member_limit=1,  # Только один пользователь
+            member_limit=1,
             expire_date=expire_date,
-            name=f'Подписка на {period_hours} часов'
+            name=f'Подписка на {period_seconds} секунд'
         )
         link = invite_link.invite_link
     except Exception as e:
-        await query.edit_message_text(f'Ошибка создания ссылки: {e}')
+        await update.message.reply_text(f'Ошибка создания ссылки: {e}')
         return
 
-    # Сохраняем ожидание (НОВОЕ)
-    pending_invites[admin_chat_id] = {'period': period_hours, 'message': query.message}
+    # Отправка пользователю
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=f'Приглашение в группу: {link}\nПодписка на {period_seconds} секунд.'
+        )
+        await update.message.reply_text(f'Ссылка отправлена пользователю {username} (ID: {user_id}). Ожидайте вступления.')
+    except Exception as e:
+        await update.message.reply_text(f'Ошибка отправки: {e}')
+        return
 
-    # Отправляем ссылку админу (НОВОЕ)
-    await query.edit_message_text(
-        f'Ссылка для приглашения создана (действительна 1 час, для одного пользователя):\n{link}\n\n'
-        'Отправьте эту ссылку пользователю. Когда он присоединится, подписка активируется автоматически.'
-    )
+    # Сохраняем ожидание вступления
+    pending_adds[admin_chat_id]['user_id'] = user_id
+    pending_adds[admin_chat_id]['username'] = username
+    pending_adds[admin_chat_id]['link'] = link
 
-# НОВОЕ: Handler для отслеживания вступления по invite link
+# Handler для вступления в группу
 async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.chat_member and update.chat_member.chat.id == GROUP_ID:  # ИСПРАВЛЕНО: GROUP_ID уже int
+    if update.chat_member and update.chat_member.chat.id == GROUP_ID:
         new_member = update.chat_member.new_chat_member
         if new_member.status in ['member', 'administrator', 'creator']:
             user_id = new_member.user.id
-            admin_chat_id = None
+            username = new_member.user.username or new_member.user.first_name or 'Без имени'
+            # Ищем в pending_adds
+            for admin_id, data in list(pending_adds.items()):
+                if data.get('user_id') == user_id:
+                    period_seconds = data['period']
+                    link = data['link']
+                    expire_date = datetime.now() + timedelta(seconds=period_seconds)
+                    users_data[user_id] = {
+                        'username': username,
+                        'link': link,
+                        'expire_date': expire_date
+                    }
+                    context.job_queue.run_once(kick_user, timedelta(seconds=period_seconds), data={'user_id': user_id, 'chat_id': GROUP_ID})
+                    await context.bot.send_message(
+                        chat_id=admin_id,
+                        text=f'Пользователь {username} (ID: {user_id}) присоединился. Подписка до {expire_date}.'
+                    )
+                    del pending_adds[admin_id]
+                    break
 
-            # Ищем админа, который ожидает этого пользователя (простая логика: проверяем всех pending)
-            for admin_id, data in pending_invites.items():
-                # В реальности, чтобы точно связать, можно добавить user_id в pending, но пока ищем по любому ожиданию
-                # (Предполагаем, что админы не добавляют одновременно — или улучши логику)
-                admin_chat_id = admin_id
-                period = data['period']
-                message = data['message']
-                break
-
-            if admin_chat_id:
-                # Активируем подписку
-                join_time = datetime.now()
-                users_data[user_id] = {'join_time': join_time, 'period': period, 'message': message}
-                del pending_invites[admin_chat_id]
-
-                # Устанавливаем таймер на kick
-                context.job_queue.run_once(kick_user, timedelta(hours=period), data={'user_id': user_id, 'chat_id': GROUP_ID})
-
-                # Уведомляем админа
-                await context.bot.send_message(
-                    chat_id=admin_chat_id,
-                    text=f'Пользователь {new_member.user.first_name} (ID: {user_id}) присоединился и подписан на {period} часов.'
-                )
-
-# ПЕРЕНЕСЕНО ИЗ СТАРОГО: Без изменений (для удаления пользователя)
-async def remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text('Введите user_id пользователя для удаления:')
-
-# ПЕРЕНЕСЕНО ИЗ СТАРОГО: Handler для обработки ввода user_id при удалении (предполагаю, что в старом был MessageHandler для этого)
-async def handle_remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_user.id not in ADMIN_IDS:
-        return
-    try:
-        user_id = int(update.message.text)
-        if user_id in users_data:
-            # Kick пользователя
-            await context.bot.ban_chat_member(GROUP_ID, user_id)  # GROUP_ID уже int
-            await context.bot.unban_chat_member(GROUP_ID, user_id)  # Unban для kick
-            del users_data[user_id]
-            await update.message.reply_text(f'Пользователь {user_id} удалён.')
-        else:
-            await update.message.reply_text('Пользователь не найден.')
-    except ValueError:
-        await update.message.reply_text('Неверный user_id.')
-
-# ПЕРЕНЕСЕНО ИЗ СТАРОГО: Без изменений (для списка пользователей)
-async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+# Handler для 'manage_members' (список пользователей)
+async def manage_members(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     if not users_data:
-        await query.edit_message_text('Список пользователей пуст.')
+        keyboard = [[InlineKeyboardButton("Назад", callback_data='back_to_menu')]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text('Нет активных подписок.', reply_markup=reply_markup)
         return
-    text = 'Список пользователей:\n'
+    keyboard = []
     for user_id, data in users_data.items():
-        text += f'ID: {user_id}, Период: {data["period"]} часов, Время вступления: {data["join_time"]}\n'
-    await query.edit_message_text(text)
+        expire_str = data['expire_date'].strftime('%Y-%m-%d %H:%M:%S')
+        keyboard.append([InlineKeyboardButton(f"{data['username']} - {user_id} - {expire_str}", callback_data=f'user_{user_id}')])
+    keyboard.append([InlineKeyboardButton("Назад", callback_data='back_to_menu')])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text('Управление членством группы:', reply_markup=reply_markup)
 
-# ПЕРЕНЕСЕНО ИЗ СТАРОГО: Функция для kick (с небольшими изменениями для job queue)
+# Handler для user_* (детали и кнопки)
+async def user_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    data = query.data.split('_')
+    user_id = int(data[1])
+    if user_id not in users_data:
+        await query.edit_message_text('Пользователь не найден.')
+        return
+    user_info = users_data[user_id]
+    text = (
+        f'Тег: @{user_info["username"]}\n'
+        f'ID: {user_id}\n'
+        f'Ссылка: {user_info["link"]}\n'
+        f'Дата окончания: {user_info["expire_date"].strftime("%Y-%m-%d %H:%M:%S")}'
+    )
+    keyboard = [
+        [InlineKeyboardButton("Удалить пользователя", callback_data=f'delete_{user_id}')],
+        [InlineKeyboardButton("Продлить подписку", callback_data=f'extend_{user_id}')],
+        [InlineKeyboardButton("Назад", callback_data='manage_members')],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(text, reply_markup=reply_markup)
+
+# Handler для 'delete_*'
+async def delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    data = query.data.split('_')
+    user_id = int(data[1])
+    if user_id in users_data:
+        try:
+            await context.bot.ban_chat_member(GROUP_ID, user_id)
+            await context.bot.unban_chat_member(GROUP_ID, user_id)
+            del users_data[user_id]
+            await query.edit_message_text('Пользователь удалён. Возврат в меню.')
+            # Возврат в меню
+            keyboard = [
+                [InlineKeyboardButton("Добавить нового пользователя в группу", callback_data='add_new')],
+                [InlineKeyboardButton("Управление членством группы", callback_data='manage_members')],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.message.reply_text('Меню:', reply_markup=reply_markup)
+        except Exception as e:
+            await query.edit_message_text(f'Ошибка удаления: {e}')
+    else:
+        await query.edit_message_text('Пользователь не найден.')
+
+# Handler для 'extend_*' (выбор периода продления)
+async def extend_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    data = query.data.split('_')
+    user_id = int(data[1])
+    if user_id not in users_data:
+        await query.edit_message_text('Пользователь не найден.')
+        return
+    context.user_data['extending_user'] = user_id
+    keyboard = [
+        [InlineKeyboardButton("10 секунд", callback_data='extend_period_10')],
+        [InlineKeyboardButton("30 секунд", callback_data='extend_period_30')],
+        [InlineKeyboardButton("1 минута", callback_data='extend_period_60')],
+        [InlineKeyboardButton("Назад", callback_data=f'user_{user_id}')],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text('Выберите период продления:', reply_markup=reply_markup)
+
+# Handler для 'extend_period_*'
+async def extend_period(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    data = query.data.split('_')
+    period_seconds = int(data[2])
+    user_id = context.user_data.get('extending_user')
+    if not user_id or user_id not in users_data:
+        await query.edit_message_text('Ошибка.')
+        return
+    users_data[user_id]['expire_date'] += timedelta(seconds=period_seconds)
+    # Обновить job (отменить старый, запустить новый)
+    # Для простоты — перезапустить job
+    context.job_queue.run_once(kick_user, users_data[user_id]['expire_date'] - datetime.now(), data={'user_id': user_id, 'chat_id': GROUP_ID})
+    await query.edit_message_text(f'Подписка продлена на {period_seconds} секунд. Новая дата: {users_data[user_id]["expire_date"]}. Возврат в меню.')
+    # Возврат в меню
+    keyboard = [
+        [InlineKeyboardButton("Добавить нового пользователя в группу", callback_data='add_new')],
+        [InlineKeyboardButton("Управление членством группы", callback_data='manage_members')],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.reply_text('Меню:', reply_markup=reply_markup)
+
+# Handler для 'back_to_menu'
+async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    keyboard = [
+        [InlineKeyboardButton("Добавить нового пользователя в группу", callback_data='add_new')],
+        [InlineKeyboardButton("Управление членством группы", callback_data='manage_members')],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text('Меню:', reply_markup=reply_markup)
+
+# Функция для kick
 async def kick_user(context: ContextTypes.DEFAULT_TYPE) -> None:
     job = context.job
     user_id = job.data['user_id']
-    chat_id = job.data['chat_id']  # chat_id = GROUP_ID, уже int
+    chat_id = job.data['chat_id']
     try:
         await context.bot.ban_chat_member(chat_id, user_id)
-        await context.bot.unban_chat_member(chat_id, user_id)  # Unban для kick, не ban
+        await context.bot.unban_chat_member(chat_id, user_id)
         if user_id in users_data:
             del users_data[user_id]
     except Exception as e:
         logger.error(f'Ошибка kick: {e}')
 
-# ПЕРЕНЕСЕНО ИЗ СТАРОГО: Handler для обработки контактов (если был, но теперь не нужен для добавления — оставил на всякий случай)
-async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Старый код для контактов — теперь не используется в логике добавления, но оставлен
-    pass
+async def main():
+    app = Application.builder().token(TOKEN).updater(None).build()
 
-def main() -> None:
-    application = Application.builder().token(TOKEN).build()
+    # Добавляем handlers
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(admin, pattern='^admin$'))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_password))
+    app.add_handler(CallbackQueryHandler(add_new, pattern='^add_new$'))
+    app.add_handler(CallbackQueryHandler(add_new_period, pattern='^period_'))
+    app.add_handler(MessageHandler(filters.CONTACT | filters.TEXT, handle_add_user))
+    app.add_handler(ChatMemberHandler(handle_new_member, ChatMemberHandler.CHAT_MEMBER))
+    app.add_handler(CallbackQueryHandler(manage_members, pattern='^manage_members$'))
+    app.add_handler(CallbackQueryHandler(user_details, pattern='^user_'))
+    app.add_handler(CallbackQueryHandler(delete_user, pattern='^delete_'))
+    app.add_handler(CallbackQueryHandler(extend_user, pattern='^extend_'))
+    app.add_handler(CallbackQueryHandler(extend_period, pattern='^extend_period_'))
+    app.add_handler(CallbackQueryHandler(back_to_menu, pattern='^back_to_menu$'))
 
-    # ПЕРЕНЕСЕНО ИЗ СТАРОГО: Handlers для команд и меню
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("admin", admin_menu))
-    application.add_handler(CallbackQueryHandler(add_user, pattern='^add_user$'))  # ИСПРАВЛЕНО: Добавлен $
-    application.add_handler(CallbackQueryHandler(add_user_period, pattern='^period_'))
-    application.add_handler(CallbackQueryHandler(remove_user, pattern='^remove_user$'))  # ИСПРАВЛЕНО: Добавлен $
-    application.add_handler(CallbackQueryHandler(list_users, pattern='^list_users$'))
+    # Устанавливаем webhook
+    await app.bot.set_webhook(f"{URL}/telegram", allowed_updates=Update.ALL_TYPES)
 
-    # НОВОЕ: Handler для вступления в группу
-    application.add_handler(ChatMemberHandler(handle_new_member, ChatMemberHandler.CHAT_MEMBER))
+    # Starlette
+    async def telegram(request: Request) -> Response:
+        await app.update_queue.put(Update.de_json(await request.json(), app.bot))
+        return Response()
 
-    # ПЕРЕНЕСЕНО ИЗ СТАРОГО: Handlers для сообщений (удаление по user_id, контакты)
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remove_user))  # Для ввода user_id при удалении
-    application.add_handler(MessageHandler(filters.CONTACT, handle_contact))  # Для контактов (если нужно)
+    async def health(_: Request) -> PlainTextResponse:
+        return PlainTextResponse("ok")
 
-    application.run_polling()
+    starlette = Starlette(routes=[
+        Route("/telegram", telegram, methods=["POST"]),
+        Route("/healthcheck", health, methods=["GET"]),
+    ])
 
-if __name__ == '__main__':
-    main()
+    # Запуск
+    server = uvicorn.Server(uvicorn.Config(app=starlette, host="0.0.0.0", port=PORT, use_colors=False))
+    async with app:
+        await app.start()
+        await server.serve()
+        await app.stop()
+
+if __name__ == "__main__":
+    asyncio.run(main())
