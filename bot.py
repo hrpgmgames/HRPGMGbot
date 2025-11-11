@@ -68,51 +68,13 @@ async def add_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text('Выберите период подписки:', reply_markup=reply_markup)
 
-# Handler для выбора периода (запрос контакта/тега)
+# Handler для выбора периода (создание link и отдача админу)
 async def add_new_period(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     data = query.data.split('_')
     period_seconds = int(data[1])
     admin_chat_id = query.from_user.id
-    context.user_data['pending_period'] = period_seconds
-    keyboard = [[InlineKeyboardButton("Назад", callback_data='add_new')]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(
-        f'Период выбран: {period_seconds} секунд.\n'
-        'Теперь скиньте контакт пользователя или введите его @тег/@username (или user_id):',
-        reply_markup=reply_markup
-    )
-
-# Handler для контакта/тега (создание link и отдача админу)
-async def handle_add_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    admin_chat_id = update.effective_user.id
-    period_seconds = context.user_data.get('pending_period')
-    if not period_seconds:
-        return
-    user_id = None
-    username = None
-
-    if update.message.contact:
-        user_id = update.message.contact.user_id
-        username = update.message.contact.first_name or 'Без имени'
-    elif update.message.text:
-        text = update.message.text.strip()
-        if text.startswith('@'):
-            username = text[1:]
-            # Для @username нужно получить user_id — бот не может напрямую, так что просим user_id
-            await update.message.reply_text('Для @тега введите user_id пользователя (число).')
-            return
-        else:
-            try:
-                user_id = int(text)
-                username = f'User_{user_id}'  # Заглушка, если нет имени
-            except ValueError:
-                await update.message.reply_text('Неверный формат. Скиньте контакт или введите user_id.')
-                return
-
-    if not user_id:
-        return
 
     # Создание invite link
     expire_date = datetime.now() + timedelta(hours=1)
@@ -125,19 +87,20 @@ async def handle_add_user(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         link = invite_link.invite_link
     except Exception as e:
-        await update.message.reply_text(f'Ошибка создания ссылки: {e}')
+        await query.edit_message_text(f'Ошибка создания ссылки: {e}')
         return
 
     # Сохраняем в pending_adds по link
-    pending_adds[link] = {'period': period_seconds, 'admin_id': admin_chat_id, 'target_user_id': user_id, 'target_username': username}
+    pending_adds[link] = {'period': period_seconds, 'admin_id': admin_chat_id}
 
     # Показываем ссылку админу
-    await update.message.reply_text(
+    keyboard = [[InlineKeyboardButton("Назад", callback_data='back_to_menu')]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(
         f'Ссылка создана: {link}\n'
-        f'Отправьте её пользователю {username} (ID: {user_id}) вручную. После вступления он будет занесён в базу с периодом {period_seconds} секунд.'
+        f'Отправьте эту ссылку пользователю вручную. После вступления он будет занесён в базу с периодом {period_seconds} секунд.',
+        reply_markup=reply_markup
     )
-    # Очищаем pending
-    del context.user_data['pending_period']
 
 # Handler для вступления в группу
 async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -303,7 +266,6 @@ async def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_password))
     app.add_handler(CallbackQueryHandler(add_new, pattern='^add_new$'))
     app.add_handler(CallbackQueryHandler(add_new_period, pattern='^period_'))
-    app.add_handler(MessageHandler(filters.CONTACT | filters.TEXT, handle_add_user))
     app.add_handler(ChatMemberHandler(handle_new_member, ChatMemberHandler.CHAT_MEMBER))
     app.add_handler(CallbackQueryHandler(manage_members, pattern='^manage_members$'))
     app.add_handler(CallbackQueryHandler(user_details, pattern='^user_'))
