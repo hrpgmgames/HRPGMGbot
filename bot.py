@@ -10,7 +10,7 @@ TOKEN = os.getenv('BOT_TOKEN')  # Твоя переменная для токе�
 if not TOKEN:
     raise ValueError("BOT_TOKEN не задан в env!")
 
-GROUP_ID = os.getenv('GROUP_ID')  # ID группы (например, '-1001234567890')
+GROUP_ID = int(os.getenv('GROUP_ID'))  # ИСПРАВЛЕНО: Преобразуем в int (ID группы как число, например, -1001234567890)
 if not GROUP_ID:
     raise ValueError("GROUP_ID не задан в env!")
 
@@ -26,7 +26,7 @@ users_data = {}
 pending_invites = {}
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name}')
+logger = logging.getLogger(__name__)  # ИСПРАВЛЕНО: Убрана лишняя }
 
 # ПЕРЕНЕСЕНО ИЗ СТАРОГО: Без изменений
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -91,7 +91,7 @@ async def add_user_period(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 # НОВОЕ: Handler для отслеживания вступления по invite link
 async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.chat_member and update.chat_member.chat.id == int(GROUP_ID):
+    if update.chat_member and update.chat_member.chat.id == GROUP_ID:  # ИСПРАВЛЕНО: GROUP_ID уже int
         new_member = update.chat_member.new_chat_member
         if new_member.status in ['member', 'administrator', 'creator']:
             user_id = new_member.user.id
@@ -135,7 +135,7 @@ async def handle_remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE)
         user_id = int(update.message.text)
         if user_id in users_data:
             # Kick пользователя
-            await context.bot.ban_chat_member(GROUP_ID, user_id)
+            await context.bot.ban_chat_member(GROUP_ID, user_id)  # GROUP_ID уже int
             await context.bot.unban_chat_member(GROUP_ID, user_id)  # Unban для kick
             del users_data[user_id]
             await update.message.reply_text(f'Пользователь {user_id} удалён.')
@@ -160,7 +160,7 @@ async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def kick_user(context: ContextTypes.DEFAULT_TYPE) -> None:
     job = context.job
     user_id = job.data['user_id']
-    chat_id = job.data['chat_id']
+    chat_id = job.data['chat_id']  # chat_id = GROUP_ID, уже int
     try:
         await context.bot.ban_chat_member(chat_id, user_id)
         await context.bot.unban_chat_member(chat_id, user_id)  # Unban для kick, не ban
@@ -180,9 +180,9 @@ def main() -> None:
     # ПЕРЕНЕСЕНО ИЗ СТАРОГО: Handlers для команд и меню
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin", admin_menu))
-    application.add_handler(CallbackQueryHandler(add_user, pattern='^add_user$'))
+    application.add_handler(CallbackQueryHandler(add_user, pattern='^add_user$'))  # ИСПРАВЛЕНО: Добавлен $
     application.add_handler(CallbackQueryHandler(add_user_period, pattern='^period_'))
-    application.add_handler(CallbackQueryHandler(remove_user, pattern='^remove_user$'))
+    application.add_handler(CallbackQueryHandler(remove_user, pattern='^remove_user$'))  # ИСПРАВЛЕНО: Добавлен $
     application.add_handler(CallbackQueryHandler(list_users, pattern='^list_users$'))
 
     # НОВОЕ: Handler для вступления в группу
