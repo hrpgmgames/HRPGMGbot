@@ -106,10 +106,10 @@ async def add_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if query.from_user.id != ADMIN_ID:
         await query.edit_message_text('Доступ запрещен.')
         return
-    keyboard = [
-        [InlineKeyboardButton("10 секунд", callback_data='period_10')],
-        [InlineKeyboardButton("30 секунд", callback_data='period_30')],
-        [InlineKeyboardButton("1 минута", callback_data='period_60')],
+   keyboard = [
+        [InlineKeyboardButton("10 минут", callback_data='period_600')],  # Изменено
+        [InlineKeyboardButton("30 минут", callback_data='period_1800')],  # Изменено
+        [InlineKeyboardButton("1 час", callback_data='period_3600')],  # Изменено
         [InlineKeyboardButton("Назад", callback_data='back_to_menu')],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -202,9 +202,9 @@ async def extend_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     context.user_data['extending_user'] = user_id
     keyboard = [
-        [InlineKeyboardButton("10 секунд", callback_data='extend_period_10')],
-        [InlineKeyboardButton("30 секунд", callback_data='extend_period_30')],
-        [InlineKeyboardButton("1 минута", callback_data='extend_period_60')],
+        [InlineKeyboardButton("10 минут", callback_data='extend_period_600')],  # Изменено
+        [InlineKeyboardButton("30 минут", callback_data='extend_period_1800')],  # Изменено
+        [InlineKeyboardButton("1 час", callback_data='extend_period_3600')],  # Изменено
         [InlineKeyboardButton("Назад", callback_data=f'user_{user_id}')],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
