@@ -260,10 +260,26 @@ async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text('Админ-меню:', reply_markup=reply_markup)
 
-# Main
-async def main():
-    app = Application.builder().token(TOKEN).updater(None).build()
+# Webhook handler для Starlette
+async def handle_webhook(request: Request) -> Response:
+    data = await request.json()
+    update = Update.de_json(data, app.bot)
+    await app.process_update(update)
+    return Response()
 
+# Создаём routes для Starlette
+routes = [
+    Route("/webhook", handle_webhook, methods=["POST"]),
+]
+
+# Starlette app
+starlette_app = Starlette(routes=routes)
+
+# Application TG
+app = Application.builder().token(TOKEN).build()
+
+# Main (теперь не async, для uvicorn.run)
+def main():
     # Добавляем handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(admin, pattern=r'^admin$'))  # Raw для consistency
@@ -279,14 +295,14 @@ async def main():
     app.add_handler(CallbackQueryHandler(extend_period, pattern=r'^extend_period_\d+$'))  # Исправлено: raw string
     app.add_handler(CallbackQueryHandler(back_to_menu, pattern=r'^back_to_menu$'))
 
-    # Webhook setup (предполагаю, у тебя есть)
-    await app.bot.set_webhook(url=f"{URL}/webhook")
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path="/webhook",
-        webhook_url=f"{URL}/webhook"
-    )
+    # Webhook setup
+    import asyncio
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(app.bot.set_webhook(url=f"{URL}/webhook"))
+
+    # Запуск Starlette
+    uvicorn.run(starlette_app, host="0.0.0.0", port=PORT)
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    main()
