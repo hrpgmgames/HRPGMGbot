@@ -277,6 +277,9 @@ async def main():
     
     # Фоновая задача для проверки подписок
     app.job_queue.run_repeating(check_subscriptions, interval=10, first=0)
+    
+    # Запуск ASGI-сервера
+    await server.serve()
 
 starlette = Starlette(routes=[
     Route("/telegram", telegram, methods=["POST"]),
