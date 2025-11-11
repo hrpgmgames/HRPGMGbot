@@ -267,9 +267,14 @@ async def handle_webhook(request: Request) -> Response:
     await app.process_update(update)
     return Response()
 
+# Healthcheck handler для Starlette
+async def handle_healthcheck(request: Request) -> PlainTextResponse:
+    return PlainTextResponse("OK")
+
 # Создаём routes для Starlette
 routes = [
     Route("/webhook", handle_webhook, methods=["POST"]),
+    Route("/healthcheck", handle_healthcheck, methods=["GET", "HEAD"]),
 ]
 
 # Starlette app
