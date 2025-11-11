@@ -279,7 +279,7 @@ async def lifespan(app_starlette):
             EXTEND_PERIOD: [CallbackQueryHandler(extend_final)]
         },
         fallbacks=[],
-        per_message=True
+        per_message=False  # Изменено с True на False, чтобы позволить MessageHandler в PASSWORD
     )
     
     app.add_handler(conv_handler)
@@ -308,4 +308,4 @@ server = uvicorn.Server(
 )
 
 if __name__ == "__main__":
-    server.run(starlette)
+    server.run()  # Исправлено: убрал аргумент starlette, так как app уже в config
