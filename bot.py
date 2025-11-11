@@ -273,8 +273,8 @@ async def main():
             ],
             EXTEND_PERIOD: [CallbackQueryHandler(extend_final)]
         },
-        fallbacks=[]
-        per_message=True,
+        fallbacks=[],
+        per_message=True
     )
     
     app.add_handler(conv_handler)
