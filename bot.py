@@ -238,7 +238,11 @@ async def chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logging.info(f"Пользователь {username} добавлен с expiry {context.user_data['expiry']}")
 
 async def telegram(request: Request) -> Response:
-    await app.update_queue.put(Update.de_json(await request.json(), app.bot))
+    data = await request.json()
+    logging.info(f"Raw update data: {data}")  # Добавь для отладки
+    update = Update.de_json(data, app.bot)
+    logging.info(f"Processed update: {update}")  # Добавь для отладки
+    await app.process_update(update)  # Измени с update_queue.put
     return Response()
 
 async def health(_: Request) -> PlainTextResponse:
@@ -270,6 +274,7 @@ async def main():
             EXTEND_PERIOD: [CallbackQueryHandler(extend_final)]
         },
         fallbacks=[]
+        per_message=True,
     )
     
     app.add_handler(conv_handler)
