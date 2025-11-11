@@ -9,6 +9,7 @@ from starlette.routing import Route
 import uvicorn
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ChatMemberHandler
+from contextlib import asynccontextmanager
 
 # Env-переменные
 TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
@@ -18,7 +19,7 @@ GROUP_ID = int(os.getenv('GROUP_ID'))
 if not GROUP_ID:
     raise ValueError("GROUP_ID не задан!")
 
-# Данные пользователей: {user_id: {'username': str, 'link': str, 'expire_date': datetime, 'job': Job}}
+# Данные пользователей: {user_id: {'username': str, 'link': str, 'expire_date': datetime}}
 users_data = {}
 # Ожидающие добавления: {invite_link: {'period': int, 'admin_id': int}}
 pending_adds = {}
@@ -26,19 +27,39 @@ pending_adds = {}
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Функция для кика пользователя (без изменений)
-async def kick_user(context: ContextTypes.DEFAULT_TYPE) -> None:
-    data = context.job.data
-    user_id = data['user_id']
-    chat_id = data['chat_id']
+# Функция для кика пользователя (теперь синхронная, без context.job.data)
+async def kick_user(user_id: int) -> None:
     if user_id in users_data:
         try:
-            await context.bot.ban_chat_member(chat_id, user_id)
-            await context.bot.unban_chat_member(chat_id, user_id)
+            # Получаем bot из app (предполагаем, что app глобальный)
+            await app.bot.ban_chat_member(GROUP_ID, user_id)
+            await app.bot.unban_chat_member(GROUP_ID, user_id)
             logger.info(f"Пользователь {users_data[user_id]['username']} (ID: {user_id}) кикнут по истечении подписки.")
             del users_data[user_id]
         except Exception as e:
             logger.error(f"Ошибка кика {user_id}: {e}")
+
+# Фоновая задача для проверки и кика истекших подписок
+async def check_and_kick_expired():
+    while True:
+        now = datetime.now()
+        to_kick = [user_id for user_id, data in users_data.items() if data['expire_date'] <= now]
+        for user_id in to_kick:
+            await kick_user(user_id)
+        await asyncio.sleep(10)  # Проверяем каждые 10 секунд
+
+# Lifespan для Starlette (запускаем фоновую задачу)
+@asynccontextmanager
+async def lifespan(app):
+    # Запуск фоновой задачи
+    task = asyncio.create_task(check_and_kick_expired())
+    yield
+    # Остановка при завершении
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
 
 # Handler для /start (без изменений)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -155,14 +176,14 @@ async def extend_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     context.user_data['extending_user'] = user_id
     keyboard = [
         [InlineKeyboardButton("10 секунд", callback_data='extend_period_10')],
-        [InlineKeyboardButton("30 секунд", callback_data='extend_period_60')],
+        [InlineKeyboardButton("30 секунд", callback_data='extend_period_30')],
         [InlineKeyboardButton("1 минута", callback_data='extend_period_60')],
         [InlineKeyboardButton("Назад", callback_data=f'user_{user_id}')],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text('Выберите период продления:', reply_markup=reply_markup)
 
-# Handler для 'extend_period_{seconds}' (без изменений)
+# Handler для 'extend_period_{seconds}' (обновлено: просто добавляем время к expire_date)
 async def extend_period(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -172,13 +193,7 @@ async def extend_period(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not user_id or user_id not in users_data:
         await query.edit_message_text('Ошибка: пользователь не найден.')
         return
-    old_job = users_data[user_id].get('job')
-    if old_job:
-        old_job.schedule_removal()
     users_data[user_id]['expire_date'] += timedelta(seconds=period_seconds)
-    time_to_expire = users_data[user_id]['expire_date'] - datetime.now()
-    new_job = context.job_queue.run_once(kick_user, time_to_expire, data={'user_id': user_id, 'chat_id': GROUP_ID})
-    users_data[user_id]['job'] = new_job
     keyboard = [
         [InlineKeyboardButton("Добавить нового пользователя в группу", callback_data='add_new')],
         [InlineKeyboardButton("Управление членством группы", callback_data='manage_members')],
@@ -190,16 +205,13 @@ async def extend_period(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
     context.user_data.pop('extending_user', None)
 
-# Handler для 'delete_{user_id}' (без изменений)
+# Handler для 'delete_{user_id}' (обновлено: убрана работа с job)
 async def delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     data = query.data.split('_')
     user_id = int(data[1])
     if user_id in users_data:
-        job = users_data[user_id].get('job')
-        if job:
-            job.schedule_removal()
         try:
             await context.bot.ban_chat_member(GROUP_ID, user_id)
             await context.bot.unban_chat_member(GROUP_ID, user_id)
@@ -228,13 +240,10 @@ async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             period_seconds = data['period']
             admin_id = data['admin_id']
             expire_date = datetime.now() + timedelta(seconds=period_seconds)
-            time_to_expire = timedelta(seconds=period_seconds)
-            job = context.job_queue.run_once(kick_user, time_to_expire, data={'user_id': user_id, 'chat_id': GROUP_ID})
             users_data[user_id] = {
                 'username': username,
                 'link': link,
-                'expire_date': expire_date,
-                'job': job
+                'expire_date': expire_date
             }
             await context.bot.send_message(
                 chat_id=admin_id,
@@ -270,8 +279,8 @@ routes = [
     Route("/healthcheck", handle_healthcheck, methods=["GET", "HEAD"]),
 ]
 
-# Starlette app (без изменений)
-starlette_app = Starlette(routes=routes)
+# Starlette app (с lifespan)
+starlette_app = Starlette(routes=routes, lifespan=lifespan)
 
 # Application TG (без изменений)
 app = Application.builder().token(TOKEN).build()
