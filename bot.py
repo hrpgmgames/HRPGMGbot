@@ -16,8 +16,11 @@ TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 URL = os.environ["RENDER_EXTERNAL_URL"]
 PORT = int(os.getenv("PORT", 8000))
 GROUP_ID = int(os.getenv('GROUP_ID'))
+ADMIN_ID = int(os.getenv('ADMIN_ID'))
 if not GROUP_ID:
     raise ValueError("GROUP_ID не задан!")
+if not ADMIN_ID:
+    raise ValueError("ADMIN_ID не задан!")
 
 # Данные пользователей: {user_id: {'username': str, 'link': str, 'expire_date': datetime}}
 users_data = {}
@@ -61,18 +64,24 @@ async def lifespan(app):
     except asyncio.CancelledError:
         pass
 
-# Handler для /start (без изменений)
+# Handler для /start (добавлена проверка админа)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text('Доступ запрещен.')
+        return
     keyboard = [
         [InlineKeyboardButton("Админ-панель", callback_data='admin')],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text('Привет! Выберите опцию:', reply_markup=reply_markup)
 
-# Handler для 'admin' (без изменений)
+# Handler для 'admin' (добавлена проверка админа)
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+    if query.from_user.id != ADMIN_ID:
+        await query.edit_message_text('Доступ запрещен.')
+        return
     keyboard = [
         [InlineKeyboardButton("Добавить нового пользователя в группу", callback_data='add_new')],
         [InlineKeyboardButton("Управление членством группы", callback_data='manage_members')],
@@ -80,17 +89,23 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text('Админ-меню:', reply_markup=reply_markup)
 
-# Handler для пароля (без изменений)
+# Handler для пароля (добавлена проверка админа)
 async def handle_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message.from_user.id != ADMIN_ID:
+        await update.message.reply_text('Доступ запрещен.')
+        return
     if update.message.text == "password":
         await admin(update, context)
     else:
         await update.message.reply_text('Неверный пароль.')
 
-# Handler для 'add_new' (без изменений)
+# Handler для 'add_new' (добавлена проверка админа)
 async def add_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+    if query.from_user.id != ADMIN_ID:
+        await query.edit_message_text('Доступ запрещен.')
+        return
     keyboard = [
         [InlineKeyboardButton("10 секунд", callback_data='period_10')],
         [InlineKeyboardButton("30 секунд", callback_data='period_30')],
@@ -100,10 +115,13 @@ async def add_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text('Выберите период подписки:', reply_markup=reply_markup)
 
-# Handler для 'period_{seconds}' — теперь бот сам создаёт invite link
+# Handler для 'period_{seconds}' — теперь бот сам создаёт invite link (добавлена проверка админа)
 async def add_new_period(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+    if query.from_user.id != ADMIN_ID:
+        await query.edit_message_text('Доступ запрещен.')
+        return
     data = query.data.split('_')
     period_seconds = int(data[1])
     admin_id = query.from_user.id
@@ -127,10 +145,13 @@ async def add_new_period(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         logger.error(f"Ошибка создания ссылки: {e}")
         await query.edit_message_text('Ошибка создания ссылки. Убедитесь, что бот — админ группы.')
 
-# Handler для 'manage_members' (без изменений)
+# Handler для 'manage_members' (добавлена проверка админа)
 async def manage_members(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+    if query.from_user.id != ADMIN_ID:
+        await query.edit_message_text('Доступ запрещен.')
+        return
     if not users_data:
         await query.edit_message_text('Нет активных пользователей.')
         return
@@ -142,10 +163,13 @@ async def manage_members(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text('Активные пользователи:', reply_markup=reply_markup)
 
-# Handler для 'user_{user_id}' (без изменений)
+# Handler для 'user_{user_id}' (добавлена проверка админа)
 async def user_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+    if query.from_user.id != ADMIN_ID:
+        await query.edit_message_text('Доступ запрещен.')
+        return
     data = query.data.split('_')
     user_id = int(data[1])
     if user_id not in users_data:
@@ -164,10 +188,13 @@ async def user_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         reply_markup=reply_markup
     )
 
-# Handler для 'extend_{user_id}' (без изменений)
+# Handler для 'extend_{user_id}' (добавлена проверка админа)
 async def extend_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+    if query.from_user.id != ADMIN_ID:
+        await query.edit_message_text('Доступ запрещен.')
+        return
     data = query.data.split('_')
     user_id = int(data[1])
     if user_id not in users_data:
@@ -183,10 +210,13 @@ async def extend_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text('Выберите период продления:', reply_markup=reply_markup)
 
-# Handler для 'extend_period_{seconds}' (обновлено: просто добавляем время к expire_date)
+# Handler для 'extend_period_{seconds}' (обновлено: просто добавляем время к expire_date) (добавлена проверка админа)
 async def extend_period(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+    if query.from_user.id != ADMIN_ID:
+        await query.edit_message_text('Доступ запрещен.')
+        return
     data = query.data.split('_')
     period_seconds = int(data[2])
     user_id = context.user_data.get('extending_user')
@@ -205,10 +235,13 @@ async def extend_period(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
     context.user_data.pop('extending_user', None)
 
-# Handler для 'delete_{user_id}' (обновлено: убрана работа с job)
+# Handler для 'delete_{user_id}' (обновлено: убрана работа с job) (добавлена проверка админа)
 async def delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+    if query.from_user.id != ADMIN_ID:
+        await query.edit_message_text('Доступ запрещен.')
+        return
     data = query.data.split('_')
     user_id = int(data[1])
     if user_id in users_data:
@@ -227,7 +260,7 @@ async def delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     else:
         await query.edit_message_text('Пользователь не найден.')
 
-# Handler для handle_new_member (обновлён: использует invite_link.invite_link)
+# Handler для handle_new_member (без проверки, так как это событие группы, но уведомляет админа)
 async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.chat_member and update.chat_member.chat.id == GROUP_ID:
         new_member = update.chat_member.new_chat_member
@@ -251,10 +284,13 @@ async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             )
             del pending_adds[link]
 
-# Handler для 'back_to_menu' (без изменений)
+# Handler для 'back_to_menu' (добавлена проверка админа)
 async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+    if query.from_user.id != ADMIN_ID:
+        await query.edit_message_text('Доступ запрещен.')
+        return
     keyboard = [
         [InlineKeyboardButton("Добавить нового пользователя в группу", callback_data='add_new')],
         [InlineKeyboardButton("Управление членством группы", callback_data='manage_members')],
