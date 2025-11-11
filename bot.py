@@ -6,9 +6,9 @@ from datetime import datetime, timedelta
 import asyncio
 
 # Настройки из переменных окружения (env)
-TOKEN = os.getenv('BOT_TOKEN')  # Твоя переменная для токена бота (обязательно!)
+TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')  # Твоя переменная для токена бота (обязательно!)
 if not TOKEN:
-    raise ValueError("BOT_TOKEN не задан в env!")
+    raise ValueError("TELEGRAM_BOT_TOKEN не задан в env!")
 
 GROUP_ID = int(os.getenv('GROUP_ID'))  # ИСПРАВЛЕНО: Преобразуем в int (ID группы как число, например, -1001234567890)
 if not GROUP_ID:
